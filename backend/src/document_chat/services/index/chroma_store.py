@@ -100,11 +100,7 @@ class ChromaStore:
             )
             return []
         document_filter = {"document_id": {"$in": document_ids}}
-        text_kinds = sorted(set(kinds) - {IMAGE_KIND}) if kinds else []
-        if text_kinds:
-            filter = {"$and": [document_filter, {"kind": {"$in": text_kinds}}]}
-        else:
-            filter = document_filter
+        filter = _text_filter(document_ids, kinds)
         with self._lock:
             try:
                 want_text = kinds is None or bool(set(kinds) - {IMAGE_KIND})
@@ -137,6 +133,28 @@ class ChromaStore:
         )
         return hits
 
+    def fetch(self, document_ids: list[str], kinds: set[str] | None = None) -> list[Chunk]:
+        if not document_ids:
+            return []
+        with self._lock:
+            try:
+                result = self._collection.get(
+                    where=_text_filter(document_ids, kinds),
+                    include=["documents", "metadatas"],
+                )
+            except Exception:
+                logger.exception("chroma fetch failed document_ids=%s", document_ids)
+                return []
+        return _chunks(result.get("ids") or [], result.get("documents") or [], result.get("metadatas") or [])
+
+
+def _text_filter(document_ids: list[str], kinds: set[str] | None) -> dict:
+    document_filter = {"document_id": {"$in": document_ids}}
+    text_kinds = sorted(set(kinds) - {IMAGE_KIND}) if kinds else []
+    if not text_kinds:
+        return document_filter
+    return {"$and": [document_filter, {"kind": {"$in": text_kinds}}]}
+
 
 def _metadata(chunk: Chunk) -> dict:
     return {
@@ -154,26 +172,17 @@ def _hits(result: dict) -> list[Chunk]:
     ids = (result.get("ids") or [[]])[0]
     documents = (result.get("documents") or [[]])[0]
     metadatas = (result.get("metadatas") or [[]])[0]
-    return [
-        Chunk(
-            id=ids[index],
-            document_id=metadatas[index]["document_id"],
-            conversation_id=metadatas[index].get("conversation_id") or "",
-            filename=metadatas[index]["filename"],
-            kind=metadatas[index]["kind"],
-            data=documents[index],
-            location=metadatas[index].get("location") or "",
-            ocr_text=metadatas[index].get("ocr_text") or "",
-            caption=metadatas[index].get("caption") or "",
-        )
-        for index in range(len(ids))
-    ]
+    return _chunks(ids, documents, metadatas)
 
 
 def _image_hits(result: dict) -> list[Chunk]:
     ids = (result.get("ids") or [[]])[0]
     uris = (result.get("uris") or [[]])[0]
     metadatas = (result.get("metadatas") or [[]])[0]
+    return _chunks(ids, uris, metadatas)
+
+
+def _chunks(ids: list, data: list, metadatas: list) -> list[Chunk]:
     return [
         Chunk(
             id=ids[index],
@@ -181,7 +190,7 @@ def _image_hits(result: dict) -> list[Chunk]:
             conversation_id=metadatas[index].get("conversation_id") or "",
             filename=metadatas[index]["filename"],
             kind=metadatas[index]["kind"],
-            data=uris[index],
+            data=data[index],
             location=metadatas[index].get("location") or "",
             ocr_text=metadatas[index].get("ocr_text") or "",
             caption=metadatas[index].get("caption") or "",

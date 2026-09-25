@@ -24,6 +24,7 @@ from document_chat.services.agents.prompts import (
     VISION_PROMPT,
 )
 from document_chat.services.index.chroma_store import chroma_store
+from document_chat.services.index.retrieval import search_chunks
 from document_chat.services.index.table_store import table_store
 from document_chat.services.parsers.kinds import (
     CODE_KIND,
@@ -180,16 +181,30 @@ def finalize_answer(
     return "final recorded"
 
 
+def resolve_documents(
+    documents: list[Document], requested: list[str] | None
+) -> list[Document]:
+    """Match requested ids or filenames; fall back to every document in scope."""
+    wanted = {str(item).strip().lower() for item in requested or [] if str(item).strip()}
+    matched = [
+        document
+        for document in documents
+        if document.id.lower() in wanted or document.filename.lower() in wanted
+    ]
+    return matched or list(documents)
+
+
 @tool
 async def retrieval_tool(
     query: str,
-    document_ids: List[str],
     state: Annotated[SubAgentState, InjectedState],
+    document_ids: List[str] | None = None,
 ) -> list:
-    """Search text chunks for this conversation. Returns cited passages."""
-    ids = document_ids or [document.id for document in state["documents"]]
+    """Hybrid (keyword + semantic) search over this conversation's files.
+    Optionally limit to document ids or filenames. Returns cited passages."""
+    ids = [document.id for document in resolve_documents(state["documents"], document_ids)]
     logger.info("retrieval tool start query=%s document_ids=%s", preview(query, 300), ids)
-    hits = chroma_store.query(query, ids, kinds={TEXT_KIND, CODE_KIND})
+    hits = search_chunks(query, ids, kinds={TEXT_KIND, CODE_KIND})
     if not hits:
         return [{"type": "text", "text": "No matching passages."}]
     result = []
@@ -233,11 +248,12 @@ async def table_tool(
 @tool
 async def vision_tool(
     query: str,
-    document_ids: List[str],
     state: Annotated[SubAgentState, InjectedState],
+    document_ids: List[str] | None = None,
 ) -> list:
-    """Search images and return caption, OCR text, and the image itself."""
-    ids = document_ids or [document.id for document in state["documents"]]
+    """Search images and return caption, OCR text, and the image itself.
+    Optionally limit to document ids or filenames."""
+    ids = [document.id for document in resolve_documents(state["documents"], document_ids)]
     logger.info("vision tool start query=%s document_ids=%s", preview(query, 300), ids)
     hits = chroma_store.query(query, ids, kinds={IMAGE_KIND})
     sources: list[tuple[str, str, str, str]]
@@ -487,12 +503,7 @@ async def run_turn(
     jobs = []
     query = " | ".join(plan["subqueries"]) if plan["subqueries"] else prompt
     if plan["need_retrieval"]:
-        docs = [
-            document
-            for document in documents
-            if document.kind in (TEXT_KIND, CODE_KIND)
-        ] or documents
-        jobs.append(("retrieval", retrieval_agent, query, docs))
+        jobs.append(("retrieval", retrieval_agent, query, documents))
     if plan["need_table"]:
         docs = [document for document in documents if document.kind == TABLE_KIND]
         catalog = table_catalog(docs)

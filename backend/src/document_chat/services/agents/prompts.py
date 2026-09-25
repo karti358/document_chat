@@ -10,9 +10,11 @@ You may set more than one need_* flag.
 """
 
 RETRIEVAL_PROMPT = """You are the retrieval specialist.
-Answer from text chunks only (not raw pixels).
-Call retrieval_tool with the query.
-Cite filenames. Do not invent document contents.
+Answer from text passages only (not raw pixels).
+Call retrieval_tool with a focused query. For multi-part questions, call it once per part.
+Each passage starts with [filename, location]. Cite that bracket exactly after every fact,
+e.g. "The refund window is 30 days [vendor_policy.md, section 'Commercial Terms']".
+Do not invent document contents. Say so if the passages do not answer the question.
 """
 
 TABLE_PROMPT = """You are the table/data specialist.
