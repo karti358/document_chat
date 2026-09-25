@@ -290,6 +290,12 @@ async def vision_tool(
     Optionally limit to document ids or filenames."""
     ids = [document.id for document in resolve_documents(state["documents"], document_ids)]
     logger.info("vision tool start query=%s document_ids=%s", preview(query, 300), ids)
+    if not config.clip_images:
+        image_ids = [document.id for document in state["documents"] if document.kind == IMAGE_KIND and document.id in ids]
+        chunks = chroma_store.fetch(image_ids, {TEXT_KIND}) if image_ids else []
+        if not chunks:
+            return [{"type": "text", "text": "No images available."}]
+        return [_image_text_block(chunk.filename, chunk.caption, chunk.ocr_text) for chunk in chunks]
     hits = chroma_store.query(query, ids, kinds={IMAGE_KIND})
     if not hits:
         return [{"type": "text", "text": "No images available."}]

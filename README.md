@@ -27,6 +27,7 @@ This is a submission for **Option 1: Multi-Format Document/File Chat** of the BD
 - [Embeddings](#embeddings)
 - [Running](#running)
 - [Docker](#docker)
+- [Streamlit Community Cloud](#streamlit-community-cloud)
 - [Trying it with the test set](#trying-it-with-the-test-set)
 - [Evaluation and tests](#evaluation-and-tests)
 - [HTTP API](#http-api)
@@ -190,7 +191,8 @@ Settings are read by `pydantic-settings` from environment variables and from `.e
 | `SQLITE_PATH` | no | `$DATA_DIR/document_chat.sqlite` | Override the metadata DB path |
 | `MAX_RETRIES` | no | `6` | Retries with backoff for hosted providers (absorbs short rate limits) |
 | `REQUESTS_PER_MINUTE` | no | `0` (off) | Client-side pacing of LLM calls, shared by all agents. `20` suits Groq's free tier |
-| `VISION_IMAGES` | no | `true` | Attach images to the vision agent. Set `false` for text-only models |
+| `VISION_IMAGES` | no | `true` | Attach images to the vision agent. Set `false` for text-only models (e.g. `openai/gpt-oss-20b`) |
+| `CLIP_IMAGES` | no | `true` | Embed images with OpenCLIP for image search. `false` never loads PyTorch (peak memory drops from about 3 GB to about 0.5 GB); images are then found by their OCR text and caption |
 | `CORS_ORIGINS` | no | `http://localhost:8501` | Comma-separated origins allowed to call the API from a browser |
 | `LOG_LEVEL` | no | `INFO` | Python log level |
 
@@ -314,6 +316,41 @@ The UI and the API share `backend/data/`. They can run at the same time, but it 
 ### Resetting state
 
 Stop the processes and delete `backend/data/`. It is recreated empty on the next start. Documents uploaded before an upgrade keep their old index entries. Re-upload them to get page, slide and line locations.
+
+---
+
+## Streamlit Community Cloud
+
+The repo root has what Community Cloud looks for:
+
+- `requirements.txt` installs `./backend` (the package and its dependencies) and takes PyTorch from its CPU-only wheel pages, which avoids several GB of CUDA packages.
+- `packages.txt` holds the apt packages: Tesseract and the image libraries.
+- `.streamlit/config.toml` holds the theme. Streamlit reads config from the working directory, which is the repo root on Community Cloud.
+
+Deploy settings:
+
+| Field | Value |
+| --- | --- |
+| Repository / branch | `karti358/document_chat` / `main` |
+| Main file path | `backend/src/document_chat/ui/app.py` |
+| Python version (Advanced settings) | `3.14` (required by `pyproject.toml`) |
+
+Secrets (Advanced settings → Secrets). Top-level keys become environment variables, which the settings loader reads the same way it reads `.env`:
+
+```toml
+PROVIDER = "groq"
+MODEL = "qwen/qwen3.8-27b"
+API_KEY = "your-key"
+REQUESTS_PER_MINUTE = "20"
+VISION_IMAGES = "true"
+CLIP_IMAGES = "false"   # stay within Community Cloud's memory limit
+```
+
+Caveats:
+
+- Storage is temporary. Uploads, the index and chat history are lost when the app restarts or sleeps.
+- Ollama is not available there. Use a hosted provider.
+- A public app spends your API quota. Prefer a private app shared by invite.
 
 ---
 

@@ -57,7 +57,7 @@ class ChromaStore:
             sorted({chunk.kind for chunk in chunks}),
         )
         with self._lock:
-            if images:
+            if images and config.clip_images:
                 loaded = []
                 for image in images:
                     loaded.append(np.array(Image.open(image.data).convert("RGB")))
@@ -104,7 +104,7 @@ class ChromaStore:
         with self._lock:
             try:
                 want_text = kinds is None or bool(set(kinds) - {IMAGE_KIND})
-                want_image = kinds is None or IMAGE_KIND in kinds
+                want_image = config.clip_images and (kinds is None or IMAGE_KIND in kinds)
                 result = {"ids": [[]], "documents": [[]], "metadatas": [[]]}
                 if want_text:
                     result = self._collection.query(

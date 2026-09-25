@@ -17,6 +17,7 @@ class Config(BaseSettings):
     max_retries: int = 6
     requests_per_minute: float = 0
     vision_images: bool = True
+    clip_images: bool = True
     data_dir: str = "data"
     sqlite_path: str | None = None
     cors_origins: str = "http://localhost:8501"

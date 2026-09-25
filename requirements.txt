@@ -1,0 +1,6 @@
+# For Streamlit Community Cloud. Local development uses backend/pyproject.toml with uv.
+# find-links (not an extra index) so only torch/torchvision come from the CPU wheel pages;
+# an extra index would shadow PyPI for packages it also mirrors, such as requests.
+--find-links https://download.pytorch.org/whl/cpu/torch/
+--find-links https://download.pytorch.org/whl/cpu/torchvision/
+./backend
