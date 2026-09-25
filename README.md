@@ -6,6 +6,15 @@ Everything except the LLM runs locally: embeddings, Chroma, DuckDB and SQLite. T
 
 This is a submission for **Option 1: Multi-Format Document/File Chat** of the BD AI Engineer case study.
 
+> [!IMPORTANT]
+> **For the best experience, use a paid/enterprise LLM provider** (OpenAI, Google Gemini, or a paid Groq tier). Each question makes 6–10 LLM calls across the agents, so the provider decides how fast and reliable the system feels:
+>
+> - **Local models (Ollama, vLLM)** work fully offline but are **slow** unless you have a powerful GPU. On a laptop CPU or small GPU, expect a minute or more per question, and small models mis-route tool calls more often.
+> - **Groq's free tier** is fast but **heavily rate-limited**: about 7k input tokens per minute and 200k tokens per day. Expect `429 Too Many Requests` retries during normal use and a daily cap of a few dozen questions.
+> - **Enterprise APIs** have much higher token-per-minute and per-day limits, and stronger tool calling. Answers are faster, 429s are rare, and routing and citations are more accurate.
+>
+> See [Model providers](#model-providers) for configuration.
+
 ---
 
 ## Contents
@@ -193,6 +202,15 @@ Settings are read by `pydantic-settings` from environment variables and from `.e
 
 One model serves all seven agents (planner, retrieval, table, vision, code, synthesis, verify). It is built in `backend/src/document_chat/config.py` (`get_client`).
 
+> [!TIP]
+> **Recommended: an enterprise provider** (`openai` with `gpt-4o-mini` or better, `google` with `gemini-2.0-flash`, or a paid Groq plan). The free and local options are good for trying the system out, but each has a real cost:
+>
+> | Option | Speed | Limits | Best for |
+> | --- | --- | --- | --- |
+> | Enterprise API (OpenAI, Gemini, paid Groq) | Fast | High token-per-minute and per-day quotas | Demos, evaluation, real use |
+> | Groq free tier | Fast per call | ~7k input tokens/min, ~200k tokens/day, so frequent 429 retries | Short trials |
+> | Ollama / vLLM (local) | Slow without a strong GPU | None, runs offline | Privacy, no API key |
+
 | Provider | `PROVIDER` | LangChain class | Needs key | Local | Example `MODEL` |
 | --- | --- | --- | --- | --- | --- |
 | **Groq** (default) | `groq` | `ChatGroq` | yes (free tier) | no | `qwen/qwen3.8-27b`, `llama-3.3-70b-versatile` |
@@ -202,6 +220,14 @@ One model serves all seven agents (planner, retrieval, table, vision, code, synt
 | Google Gemini | `google` | `ChatGoogleGenerativeAI` | yes | no | `gemini-2.0-flash` |
 
 Examples:
+
+```dotenv
+# Enterprise (recommended)
+PROVIDER=openai
+MODEL=gpt-4o-mini
+API_KEY=<your openai key>
+REQUESTS_PER_MINUTE=0
+```
 
 ```dotenv
 # Groq (default)
@@ -227,7 +253,9 @@ MODEL=Qwen/Qwen2.5-7B-Instruct
 
 **Vision.** The vision agent always gets the OCR text and caption. The image itself is attached only when `VISION_IMAGES=true`, which requires a model that accepts image input (the default Groq model does). With a text-only model, set `VISION_IMAGES=false` and the vision agent answers from OCR and caption text.
 
-**Groq free-tier limits.** A turn uses roughly 10–20k tokens across the agents. The free tier allows about 7k input tokens per minute and 200k per day for this model, so expect retries (handled by `MAX_RETRIES`) during rapid questioning, and a daily cap of roughly 10–20 questions. Use Ollama or a paid tier for longer sessions.
+**Groq free-tier limits.** A turn uses roughly 10–20k tokens across the agents. The free tier allows about 7k input tokens per minute and 200k per day for this model, so expect retries (handled by `MAX_RETRIES` and `REQUESTS_PER_MINUTE`) during rapid questioning, and a daily cap of a few dozen questions. For anything beyond a short trial, switch to an enterprise provider.
+
+**Local models (Ollama, vLLM).** There are no quotas, but every one of the 6–10 calls per turn runs on your hardware. Without a strong GPU (roughly 16 GB+ VRAM for a 7B–8B model at good speed), a question can take a minute or more. Smaller models are faster but less reliable at tool calling.
 
 ---
 
