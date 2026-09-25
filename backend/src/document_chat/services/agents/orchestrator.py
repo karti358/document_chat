@@ -498,6 +498,21 @@ def _is_bad_tool_call(exc: Exception) -> bool:
     return "tool_use_failed" in text or "not in request.tools" in text
 
 
+_IMAGE_REJECTIONS = ("content must be a string", "does not support image", "image input")
+_images_rejected = False
+
+
+def _is_image_rejection(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "400" in text and any(marker in text for marker in _IMAGE_REJECTIONS)
+
+
+def _reject_images() -> None:
+    """Remember for this process that the model is text-only, so later turns skip image blocks."""
+    global _images_rejected
+    _images_rejected = True
+
+
 async def _try_agent(name: str, agent, query: str) -> dict | None:
     """Run a single-agent step; on failure emit agent_error and return None."""
     try:
@@ -551,16 +566,15 @@ async def _run_agent(
     )
     started = time.perf_counter()
     final = None
+    note = ""
     for attempt in range(2):
-        text = query
-        if attempt:
-            allowed = ", ".join(AGENT_TOOLS.get(name, [])) or "none"
-            text = (
-                f"{query}\n\nYour previous reply called a tool that does not exist. "
-                f"The only tools you may call are: {allowed}."
-            )
+        text = query + note
+        if attachments and _images_rejected:
+            text = "\n\n".join([text, *(block["text"] for block in attachments if "text" in block)])
         content: str | list[dict] = (
-            [{"type": "text", "text": text}, *attachments] if attachments else text
+            [{"type": "text", "text": text}, *attachments]
+            if attachments and not _images_rejected
+            else text
         )
         payload: dict = {"messages": [{"role": "user", "content": content}]}
         if documents is not None:
@@ -576,9 +590,19 @@ async def _run_agent(
                     final = chunk
             break
         except Exception as exc:
+            if attempt == 0 and attachments and not _images_rejected and _is_image_rejection(exc):
+                _reject_images()
+                logger.warning("model rejected image input; using OCR text only from now on: %s", preview(str(exc), 300))
+                await emit({"type": "agent_retry", "agent": name, "error": preview(str(exc), 300)})
+                continue
             if attempt == 0 and _is_bad_tool_call(exc):
                 logger.warning("agent called unknown tool name=%s; retrying: %s", name, preview(str(exc), 300))
                 await emit({"type": "agent_retry", "agent": name, "error": preview(str(exc), 300)})
+                allowed = ", ".join(AGENT_TOOLS.get(name, [])) or "none"
+                note = (
+                    "\n\nYour previous reply called a tool that does not exist. "
+                    f"The only tools you may call are: {allowed}."
+                )
                 continue
             logger.exception("agent failed name=%s", name)
             raise

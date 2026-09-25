@@ -525,6 +525,6 @@ document_chat/
 | `ValueError: <Token ...> was created in a different Context` | Stale process from older code. Restart the UI/API |
 | Frequent `429 Too Many Requests` / "Retrying request" | Per-minute limit. Set `REQUESTS_PER_MINUTE=20`; retries still absorb the rest. Specialists are capped at 2–4 tool calls per turn, so a turn is typically 6–10 requests |
 | `RateLimitError ... tokens per day (TPD)` from Groq | Daily free-tier quota used up. Wait, switch to Ollama, or use another key |
-| `messages[n].content must be a string` from the vision agent | Model or provider rejects images. Set `VISION_IMAGES=false` |
+| `messages[n].content must be a string` from the vision agent | The model is text-only (e.g. `openai/gpt-oss-20b`). The agent now retries with OCR text and skips images for the rest of the process; set `VISION_IMAGES=false` to avoid the wasted first request |
 | Answers cite files but show no page/slide | Documents were indexed before locations existed. Re-upload them |
 | Strange results after changing embedding models | Delete `backend/data/chroma/` and re-upload |

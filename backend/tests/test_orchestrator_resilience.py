@@ -31,6 +31,34 @@ def test_unknown_tool_call_is_retried_with_allowed_tools():
     assert "draft_answer" in agent.calls[1]
 
 
+class TextOnlyAgent:
+    """Rejects list content the way Groq does for text-only models."""
+
+    def __init__(self):
+        self.calls: list = []
+
+    async def astream(self, payload, stream_mode):
+        content = payload["messages"][0]["content"]
+        self.calls.append(content)
+        if not isinstance(content, str):
+            raise RuntimeError("Error code: 400 - messages[1].content must be a string")
+        yield "values", {"messages": [AIMessage(content="seen")]}
+
+
+def test_image_rejection_falls_back_to_text(monkeypatch):
+    monkeypatch.setattr(orchestrator, "_images_rejected", False)
+    attachments = [
+        {"type": "text", "text": "Image photo.png OCR: PO-1042"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,AAAA"}},
+    ]
+    agent = TextOnlyAgent()
+    result = asyncio.run(orchestrator._run_agent("vision", agent, "question", [], attachments))
+    assert result["answer"] == "seen"
+    assert isinstance(agent.calls[1], str) and "PO-1042" in agent.calls[1]
+    asyncio.run(orchestrator._run_agent("vision", agent, "again", [], attachments))
+    assert isinstance(agent.calls[2], str)
+
+
 def test_try_agent_returns_none_after_repeated_failure():
     agent = FakeAgent(failures=5)
     assert asyncio.run(orchestrator._try_agent("synthesis", agent, "question")) is None
