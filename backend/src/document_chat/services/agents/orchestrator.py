@@ -671,7 +671,7 @@ async def run_turn(
             "unknown": True,
             "confidence": 0.0,
         }
-    answer = str(final.get("answer") or draft_text)
+    answer = citations.clean_text(str(final.get("answer") or draft_text))
     unknown = bool(final.get("unknown"))
     cited, confidence = citations.check(
         answer,

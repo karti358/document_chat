@@ -25,6 +25,15 @@ def test_citation_never_returned_by_tools_is_flagged():
     assert confidence == UNSUPPORTED_CAP
 
 
+def test_matching_ignores_spacing_and_unicode_dashes():
+    evidence = ["[contract_acme.pdf, p. 1] Contract ID: ACME-PO1042-2024", "[reconcile.py, L1-32] code"]
+    files = FILES | {"reconcile.py"}
+    answer = "ID ACME\u2011PO1042\u20112024 [contract_acme.pdf, p.1]; logic [reconcile.py, L1\u201332]"
+    citations, confidence = check(answer, evidence, files, 0.9, False)
+    assert [item["supported"] for item in citations] == [True, True]
+    assert confidence == 0.9
+
+
 def test_uncited_answer_is_capped():
     _, confidence = check("The window is 30 days.", EVIDENCE, FILES, 0.9, False)
     assert confidence == UNCITED_CAP

@@ -8,8 +8,19 @@ UNSUPPORTED_CAP = 0.4
 UNCITED_CAP = 0.5
 
 
+_DASHES = re.compile(r"[\u2010-\u2015\u2212\u00ad]")
+_QUOTES = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"', '"': "'"})
+
+
+def clean_text(text: str) -> str:
+    """Replace typographic dashes (models often emit U+2011) with ASCII hyphens."""
+    return _DASHES.sub("-", text or "")
+
+
 def _normalize(citation: str) -> str:
-    return re.sub(r"\s+", " ", citation.strip().strip("`").lower())
+    # Formatting-insensitive: "p.1" == "p. 1", "L1–32" == "L1-32".
+    text = clean_text(citation).translate(_QUOTES).strip().strip("`").lower()
+    return re.sub(r"\s+", "", text)
 
 
 def _filename(citation: str) -> str:
@@ -18,9 +29,9 @@ def _filename(citation: str) -> str:
 
 def extract(text: str, filenames: set[str]) -> list[str]:
     """Bracketed citations whose first part is one of the uploaded filenames."""
-    known = {name.lower() for name in filenames}
+    known = {_normalize(name) for name in filenames}
     seen: list[str] = []
-    for match in _BRACKET.findall(text or ""):
+    for match in _BRACKET.findall(clean_text(text)):
         for part in match.split(";"):
             part = part.strip()
             if _filename(part) in known and part not in seen:
