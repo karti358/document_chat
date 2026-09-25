@@ -1,7 +1,7 @@
 [project]
 name = "document-chat"
 version = "0.1.0"
-description = "Add your description here"
+description = "Multi-agent chat over PDF, Office, spreadsheet, image, and code files"
 readme = "README.md"
 authors = [
     { name = "karti358", email = "kny3558@gmail.com" }
@@ -26,7 +26,6 @@ dependencies = [
     "pydantic>=2.13.5",
     "pydantic-settings>=2.11.0",
     "python-multipart>=0.0.20",
-    "tesseract>=0.1.3",
     "uvicorn>=0.53.0",
     "langchain-ollama>=1.1.0",
     "torch>=2.14.0",
