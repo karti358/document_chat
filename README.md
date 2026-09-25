@@ -6,6 +6,8 @@ Everything except the LLM runs locally: embeddings, Chroma, DuckDB and SQLite. T
 
 This is a submission for **Option 1: Multi-Format Document/File Chat** of the BD AI Engineer case study.
 
+**Live demo:** [documentchat-ez3tgsmnim5pagjfjxxaxb.streamlit.app](https://documentchat-ez3tgsmnim5pagjfjxxaxb.streamlit.app/), hosted on Streamlit Community Cloud. The demo runs on Groq's free tier, so answers can be slow or rate-limited, and uploads are cleared whenever the app restarts. Try it with the files in [`document_chat_test_set/`](document_chat_test_set/).
+
 > [!IMPORTANT]
 > **For the best experience, use a paid/enterprise LLM provider** (OpenAI, Google Gemini, or a paid Groq tier). Each question makes 6–10 LLM calls across the agents, so the provider decides how fast and reliable the system feels:
 >
@@ -320,6 +322,8 @@ Stop the processes and delete `backend/data/`. It is recreated empty on the next
 ---
 
 ## Streamlit Community Cloud
+
+Deployed at [documentchat-ez3tgsmnim5pagjfjxxaxb.streamlit.app](https://documentchat-ez3tgsmnim5pagjfjxxaxb.streamlit.app/).
 
 The repo root has what Community Cloud looks for:
 
