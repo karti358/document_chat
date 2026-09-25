@@ -513,7 +513,6 @@ def _file_manifest(documents: list[Document]) -> list[dict]:
             "id": document.id,
             "filename": document.filename,
             "kind": document.kind,
-            "path": document.path,
         }
         for document in documents
     ]

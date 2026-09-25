@@ -44,8 +44,9 @@ torch = { index = "pytorch-cpu" }
 torchvision = { index = "pytorch-cpu" }
 
 [project.scripts]
-document-chat = "document_chat:main"
+document-chat = "document_chat.api:main"
 document-chat-ui = "document_chat.ui:main"
+document-chat-eval = "document_chat.eval:main"
 
 [build-system]
 requires = ["uv_build>=0.12.1,<0.13.0"]
