@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Annotated, Any, List, Literal
 
 from langchain.agents import AgentState, create_agent
+from langchain.agents.middleware import ModelCallLimitMiddleware, ToolCallLimitMiddleware
+from langchain_core.messages import ToolMessage
 from langchain_core.tools import tool
 from langgraph.prebuilt import InjectedState
 from pydantic import BaseModel, Field
@@ -152,7 +154,9 @@ async def emit_messages(agent: str, update: dict) -> None:
                 )
 
 
-@tool
+# Recording tools end their agent's loop (return_direct): the tool arguments are
+# the output, so a follow-up model call would only cost tokens and rate limit.
+@tool(return_direct=True)
 def submit_plan(
     intent: str,
     need_retrieval: bool = True,
@@ -166,13 +170,13 @@ def submit_plan(
     return "plan recorded"
 
 
-@tool
+@tool(return_direct=True)
 def draft_answer(answer: str) -> str:
     """Record the synthesized draft answer."""
     return "draft recorded"
 
 
-@tool
+@tool(return_direct=True)
 def finalize_answer(
     answer: str,
     confidence: float = 0.5,
@@ -195,6 +199,21 @@ def resolve_documents(
     return matched or list(documents)
 
 
+def _repeated_query(state: dict, tool_name: str, query: str) -> bool:
+    """True if an earlier call in this agent run used the same (normalized) query."""
+    wanted = " ".join(query.lower().split()).strip(" :?.")
+    seen = 0
+    for message in state.get("messages") or []:
+        for call in getattr(message, "tool_calls", None) or []:
+            if call.get("name") != tool_name:
+                continue
+            previous = str((call.get("args") or {}).get("query", ""))
+            if " ".join(previous.lower().split()).strip(" :?.") == wanted:
+                seen += 1
+    # The current call is already in the last AI message, so a repeat counts twice.
+    return seen > 1
+
+
 @tool
 async def retrieval_tool(
     query: str,
@@ -203,6 +222,13 @@ async def retrieval_tool(
 ) -> list:
     """Hybrid (keyword + semantic) search over this conversation's files.
     Optionally limit to document ids or filenames. Returns cited passages."""
+    if _repeated_query(state, "retrieval_tool", query):
+        return [
+            {
+                "type": "text",
+                "text": "You already ran this query; its passages are above. Answer from them now.",
+            }
+        ]
     ids = [document.id for document in resolve_documents(state["documents"], document_ids)]
     logger.info("retrieval tool start query=%s document_ids=%s", preview(query, 300), ids)
     hits = search_chunks(query, ids, kinds={TEXT_KIND, CODE_KIND})
@@ -396,12 +422,22 @@ planner_agent = create_agent(
     name="planner",
 )
 
+def _limits(tool_calls: int) -> list:
+    # Each extra tool call resends the growing transcript; unbounded loops are what
+    # exhaust tokens-per-minute limits. Past the cap the model must answer from what it has.
+    return [
+        ToolCallLimitMiddleware(run_limit=tool_calls, exit_behavior="continue"),
+        ModelCallLimitMiddleware(run_limit=tool_calls + 1, exit_behavior="end"),
+    ]
+
+
 retrieval_agent = create_agent(
     model=model,
     tools=[retrieval_tool],
     system_prompt=RETRIEVAL_PROMPT,
     name="retrieval",
     state_schema=SubAgentState,
+    middleware=_limits(3),
 )
 
 table_agent = create_agent(
@@ -410,6 +446,7 @@ table_agent = create_agent(
     system_prompt=TABLE_PROMPT,
     name="table",
     state_schema=SubAgentState,
+    middleware=_limits(4),
 )
 
 vision_agent = create_agent(
@@ -418,6 +455,7 @@ vision_agent = create_agent(
     system_prompt=VISION_PROMPT,
     name="vision",
     state_schema=SubAgentState,
+    middleware=_limits(2),
 )
 
 code_agent = create_agent(
@@ -426,6 +464,7 @@ code_agent = create_agent(
     system_prompt=CODE_PROMPT,
     name="code",
     state_schema=SubAgentState,
+    middleware=_limits(2),
 )
 
 synthesis_agent = create_agent(
@@ -468,6 +507,28 @@ async def _try_agent(name: str, agent, query: str) -> dict | None:
             {"type": "agent_error", "agent": name, "error": f"{type(exc).__name__}: {exc}"[:500]}
         )
         return None
+
+
+_LIMIT_NOTES = ("call limit", "call limits exceeded", "You already ran this query")
+
+
+def _report_text(messages: list) -> str:
+    """The agent's final answer, or its raw tool results if a call cap cut it off."""
+    if not messages:
+        return ""
+    last = messages[-1]
+    answer = message_content(last.content)
+    cut_off = getattr(last, "tool_calls", None) or any(note in answer for note in _LIMIT_NOTES)
+    if answer.strip() and not cut_off:
+        return answer
+    results: list[str] = []
+    for message in messages:
+        if not isinstance(message, ToolMessage):
+            continue
+        text = message_content(message.content).strip()
+        if text and text not in results and not any(note in text for note in _LIMIT_NOTES):
+            results.append(text)
+    return "\n\n".join(results) or answer
 
 
 async def _run_agent(
@@ -522,7 +583,7 @@ async def _run_agent(
             logger.exception("agent failed name=%s", name)
             raise
     messages = (final or {}).get("messages") or []
-    answer = message_content(messages[-1].content) if messages else ""
+    answer = _report_text(messages)
     await emit(
         {
             "type": "agent_done",
@@ -569,6 +630,9 @@ def prior_plans(messages: list[dict]) -> list[dict]:
     return plans
 
 
+_PRIOR_PLANS = 3
+
+
 async def run_turn(
     prompt: str,
     documents: list[Document],
@@ -577,8 +641,8 @@ async def run_turn(
     manifest = _file_manifest(documents)
     planner_input = "\n\n".join(
         [
-            f"File manifest:\n{json.dumps(manifest, indent=2)}",
-            f"Previous planner outputs:\n{json.dumps(prior or [], indent=2)}",
+            f"File manifest:\n{json.dumps(manifest)}",
+            f"Previous planner outputs:\n{json.dumps((prior or [])[-_PRIOR_PLANS:])}",
             f"Current question:\n{prompt.strip()}",
         ]
     )
@@ -623,6 +687,7 @@ async def run_turn(
         )
 
     reports: dict[str, str] = {}
+    failed: set[str] = set()
     evidence: list[str] = [
         block["text"] for blocks in attachments.values() for block in blocks if "text" in block
     ]
@@ -637,6 +702,7 @@ async def run_turn(
         for (name, *_), result in zip(jobs, results):
             if isinstance(result, BaseException):
                 reports[name] = f"{name} specialist failed: {type(result).__name__}: {result}"[:500]
+                failed.add(name)
                 await emit({"type": "agent_error", "agent": name, "error": reports[name]})
                 continue
             reports[result["name"]] = result["answer"]
@@ -648,8 +714,7 @@ async def run_turn(
 
     synthesis_input = (
         f"Question:\n{prompt.strip()}\n\n"
-        f"Plan:\n{json.dumps(plan)}\n\n"
-        f"File manifest:\n{json.dumps(manifest)}\n\n"
+        f"Plan intent: {plan['intent']}\n\n"
         f"Specialist reports:\n{json.dumps(reports)}"
     )
     synthesis = await _try_agent("synthesis", synthesis_agent, synthesis_input)
@@ -665,9 +730,13 @@ async def run_turn(
         f"Draft:\n{draft_text}\n\nSpecialist reports:\n{json.dumps(reports)}",
     )
     final = (tool_call_args(verify["messages"], "finalize_answer") if verify else None) or {}
-    if not draft_text.strip() and not final.get("answer"):
+    if synthesis is None and verify is None and len(failed) == len(reports):
         final = {
-            "answer": "I don't know. The agents could not produce an answer for this question.",
+            "answer": (
+                "I couldn't complete this answer: the language model provider rejected the "
+                "requests (most often a rate limit or daily quota). Please retry in a minute, "
+                "or switch PROVIDER. Details are in the agent trace."
+            ),
             "unknown": True,
             "confidence": 0.0,
         }

@@ -73,6 +73,7 @@ flowchart TD
 ```
 
 - Specialists run **in parallel** (`asyncio.gather`), and only the ones the planner selects are run. If one fails (rate limit, bad tool call), its error becomes its report and the rest of the turn continues.
+- Each specialist has a tool-call budget (retrieval 3, table 4, vision 2, code 2) enforced by LangChain middleware, and repeated queries short-circuit. If a specialist hits its budget before writing a report, its raw tool results become the report. Recording tools (`submit_plan`, `draft_answer`, `finalize_answer`) end their agent immediately (`return_direct`), which saves one LLM call each.
 - Every agent is a LangChain `create_agent` ReAct loop. Planner, synthesis and verify each have one "recording" tool whose arguments are the structured output: the plan, the draft, and the final answer.
 - **Citations.** Every passage a tool returns starts with `[filename, location]`: page, slide, section, sheet, table or line range. After the verify agent, a deterministic check matches each citation in the answer against what the tools actually returned. Unverified citations are flagged in the UI and cap the confidence at 0.4; answers with no citations are capped at 0.5.
 - **Images.** The vision agent gets relevant images as typed `text` + `image_url` block pairs (filename, caption, OCR text, then the pixels) in its input message. Several providers, Groq among them, reject images inside tool results, so `vision_tool` itself returns text only.
@@ -179,6 +180,7 @@ Settings are read by `pydantic-settings` from environment variables and from `.e
 | `DATA_DIR` | no | `data` | Where uploads, Chroma, DuckDB and SQLite live (relative to `backend/`) |
 | `SQLITE_PATH` | no | `$DATA_DIR/document_chat.sqlite` | Override the metadata DB path |
 | `MAX_RETRIES` | no | `6` | Retries with backoff for hosted providers (absorbs short rate limits) |
+| `REQUESTS_PER_MINUTE` | no | `0` (off) | Client-side pacing of LLM calls, shared by all agents. `20` suits Groq's free tier |
 | `VISION_IMAGES` | no | `true` | Attach images to the vision agent. Set `false` for text-only models |
 | `CORS_ORIGINS` | no | `http://localhost:8501` | Comma-separated origins allowed to call the API from a browser |
 | `LOG_LEVEL` | no | `INFO` | Python log level |
@@ -493,6 +495,7 @@ document_chat/
 | First upload or query is slow | One-time download of MiniLM (text) or OpenCLIP (images) weights |
 | `Connection refused` to `127.0.0.1:11434` | Start Ollama: `ollama serve` |
 | `ValueError: <Token ...> was created in a different Context` | Stale process from older code. Restart the UI/API |
+| Frequent `429 Too Many Requests` / "Retrying request" | Per-minute limit. Set `REQUESTS_PER_MINUTE=20`; retries still absorb the rest. Specialists are capped at 2–4 tool calls per turn, so a turn is typically 6–10 requests |
 | `RateLimitError ... tokens per day (TPD)` from Groq | Daily free-tier quota used up. Wait, switch to Ollama, or use another key |
 | `messages[n].content must be a string` from the vision agent | Model or provider rejects images. Set `VISION_IMAGES=false` |
 | Answers cite files but show no page/slide | Documents were indexed before locations existed. Re-upload them |

@@ -9,12 +9,13 @@ UNCITED_CAP = 0.5
 
 
 _DASHES = re.compile(r"[\u2010-\u2015\u2212\u00ad]")
+_SPACES = re.compile(r"[\u00a0\u2007\u2009\u200a\u202f]")
 _QUOTES = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"', '"': "'"})
 
 
 def clean_text(text: str) -> str:
-    """Replace typographic dashes (models often emit U+2011) with ASCII hyphens."""
-    return _DASHES.sub("-", text or "")
+    """Replace typographic dashes (models often emit U+2011) and spaces with ASCII."""
+    return _SPACES.sub(" ", _DASHES.sub("-", text or ""))
 
 
 def _normalize(citation: str) -> str:

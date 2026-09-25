@@ -1,6 +1,6 @@
 import asyncio
 
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, ToolMessage
 
 from document_chat.services.agents import orchestrator
 
@@ -45,3 +45,33 @@ def test_turn_survives_synthesis_and_verify_failures(monkeypatch):
     result = asyncio.run(orchestrator.run_turn("refund window?", [], []))
     assert "30 days" in result["content"]
     assert result["plan"]["need_retrieval"] is True
+
+
+def test_repeated_query_detection():
+    call = lambda query: AIMessage(  # noqa: E731
+        content="", tool_calls=[{"name": "retrieval_tool", "args": {"query": query}, "id": query}]
+    )
+    first = {"messages": [call("Contract ID:")]}
+    assert not orchestrator._repeated_query(first, "retrieval_tool", "Contract ID:")
+    repeat = {"messages": [call("Contract ID:"), call("contract id")]}
+    assert orchestrator._repeated_query(repeat, "retrieval_tool", "contract id")
+
+
+def test_capped_agent_reports_its_tool_results():
+    messages = [
+        AIMessage(content="", tool_calls=[{"name": "retrieval_tool", "args": {"query": "a"}, "id": "1"}]),
+        ToolMessage(content="[contract_acme.pdf, p. 1] Contract ID: ACME-PO1042-2024", tool_call_id="1"),
+        AIMessage(content="", tool_calls=[{"name": "retrieval_tool", "args": {"query": "b"}, "id": "2"}]),
+        ToolMessage(content="Tool call limit exceeded. Do not make additional tool calls.", tool_call_id="2"),
+        AIMessage(content="Model call limits exceeded: run limit (4/4)"),
+    ]
+    assert orchestrator._report_text(messages) == "[contract_acme.pdf, p. 1] Contract ID: ACME-PO1042-2024"
+    assert orchestrator._report_text([AIMessage(content="Found it.")]) == "Found it."
+
+
+def test_turn_reports_provider_failure_when_everything_fails(monkeypatch):
+    for name in ("planner_agent", "retrieval_agent", "synthesis_agent", "verify_agent"):
+        monkeypatch.setattr(orchestrator, name, FakeAgent(failures=5))
+    result = asyncio.run(orchestrator.run_turn("refund window?", [], []))
+    assert result["unknown"] is True
+    assert "rate limit" in result["content"]
