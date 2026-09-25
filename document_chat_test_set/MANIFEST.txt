@@ -1,0 +1,12 @@
+Document Chat Test Set
+========================
+
+Files:
+- vendor_policy.md      | Markdown | refund 30 days; Net-30
+- contract_acme.pdf     | PDF      | Acme; PO-1042; signed 2024-03-01
+- q3_invoices.xlsx      | XLSX     | invoice rows; two PO-1042 rows
+- q3_summary.csv        | CSV      | region totals matching spreadsheet
+- q3_review.pptx        | PPTX    | "Acme paid twice on PO-1042."
+- invoice_scan.png      | PNG      | invoice showing PO-1042 and $12,500.00
+- reconcile.py          | Python   | duplicate po_id detection
+- readme.txt            | Text     | folder description
