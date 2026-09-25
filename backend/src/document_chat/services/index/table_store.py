@@ -134,6 +134,10 @@ _BANNED = re.compile(
     r"\b(insert|update|delete|drop|attach|copy|pragma|create|alter|install|load|export|call)\b",
     re.IGNORECASE,
 )
+_FILE_FUNCTIONS = re.compile(
+    r"\b(read_\w+|\w+_scan|glob|getenv|query|query_table|sniff_csv)\s*\(",
+    re.IGNORECASE,
+)
 _TABLE = re.compile(r"\bt_[a-z0-9_]+\b", re.IGNORECASE)
 
 def _validated_select(sql: str, allowed: set[str]) -> str:
@@ -147,6 +151,8 @@ def _validated_select(sql: str, allowed: set[str]) -> str:
         raise ValueError("Only SELECT statements are allowed")
     if _BANNED.search(statement):
         raise ValueError("Only read-only SELECT statements are allowed")
+    if _FILE_FUNCTIONS.search(statement) or re.search(r"'[^']*[/\\.][^']*\.\w{2,5}'", statement):
+        raise ValueError("Reading files or external sources is not allowed")
     mentioned = {name.lower() for name in _TABLE.findall(statement)}
     allowed_lower = {name.lower() for name in allowed}
     if not mentioned or not mentioned <= allowed_lower:

@@ -21,6 +21,7 @@ _QUESTION = re.compile(r"^## Q(\d+)\. (.+)$", re.MULTILINE)
 _BOLD = re.compile(r"\*\*(.+?)\*\*")
 _SOURCES = re.compile(r"^\*\*Sources?:\*\*\s*(.+)$", re.MULTILINE)
 _NUMBER = re.compile(r"-?\d[\d,]*(?:\.\d+)?")
+_STOPWORDS = {"from", "with", "that", "this", "than", "into", "their", "there", "which", "under"}
 _DATE_FORMATS = ("%Y-%m-%d", "%B %d, %Y", "%B %d %Y", "%d %B %Y", "%b %d, %Y")
 
 
@@ -75,6 +76,9 @@ def _date(text: str) -> datetime | None:
 
 def key_found(key: str, answer: str) -> bool:
     lowered = answer.lower()
+    if key.lower() in {"yes", "no"}:
+        first = re.split(r"[.!,;\n]", answer.strip(), maxsplit=1)[0].lower()
+        return re.search(rf"\b{key.lower()}\b", first) is not None
     if key.lower() in lowered:
         return True
     date = _date(key)
@@ -89,10 +93,11 @@ def key_found(key: str, answer: str) -> bool:
     key_numbers = _numbers(key)
     if key_numbers and not re.search(r"[a-z]{3,}", key.lower().replace("inv", "").replace("po", "")):
         return key_numbers <= _numbers(answer)
-    if key.lower() in {"yes", "no"}:
-        first = re.split(r"[.!\n]", answer.strip(), maxsplit=1)[0].lower()
-        return re.search(rf"\b{key.lower()}\b", first) is not None
-    words = [word for word in re.findall(r"[a-z0-9$.,-]+", key.lower()) if len(word) > 3 or word[0].isdigit()]
+    words = [
+        word
+        for word in re.findall(r"[a-z0-9$.,-]+", key.lower())
+        if (len(word) > 3 and word not in _STOPWORDS) or word[0].isdigit()
+    ]
     if len(words) >= 2:
         answer_words = set(re.findall(r"[a-z0-9$.,-]+", lowered))
         return all(word.strip(".,") in {item.strip(".,") for item in answer_words} for word in words)
