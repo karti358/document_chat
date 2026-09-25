@@ -47,7 +47,7 @@ def get_client(config: Config) -> ChatGroq | ChatOpenAI | ChatGoogleGenerativeAI
     elif config.provider == "ollama":
         return ChatOllama(
             model=config.model,
-            base_url=base_url,
+            # base_url=base_url,
         )
     else:
         raise ValueError(f"Invalid provider: {config.provider}")

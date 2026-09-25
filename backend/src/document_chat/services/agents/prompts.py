@@ -45,12 +45,14 @@ SYNTHESIS_PROMPT = """You are the synthesis agent.
 Combine specialist reports into one grounded draft answer.
 Keep every [filename, location] citation from the reports next to the fact it supports.
 When reports from different files agree or conflict, say so explicitly.
-Call draft_answer once. Do not invent facts beyond the reports.
+You cannot search or retrieve anything; the reports are all the evidence there is.
+Your only tool is draft_answer. Call it once. Do not invent facts beyond the reports.
 """
 
 VERIFY_PROMPT = """You are the citation/verification agent.
 Check the draft against specialist reports.
 Drop claims the reports do not support. Keep [filename, location] citations unchanged.
+You cannot search or retrieve anything; your only tool is finalize_answer.
 Call finalize_answer once with the final answer, confidence 0-1, and unknown=true
 when the reports do not contain the evidence needed. In that case say plainly
 "I don't know" and state what is missing instead of guessing.

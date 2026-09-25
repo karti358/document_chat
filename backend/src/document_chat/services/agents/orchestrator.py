@@ -443,6 +443,33 @@ verify_agent = create_agent(
 )
 
 
+AGENT_TOOLS = {
+    "planner": [submit_plan.name],
+    "retrieval": [retrieval_tool.name],
+    "table": [table_tool.name],
+    "vision": [vision_tool.name],
+    "code": [code_tool.name],
+    "synthesis": [draft_answer.name],
+    "verify": [finalize_answer.name],
+}
+
+
+def _is_bad_tool_call(exc: Exception) -> bool:
+    text = str(exc)
+    return "tool_use_failed" in text or "not in request.tools" in text
+
+
+async def _try_agent(name: str, agent, query: str) -> dict | None:
+    """Run a single-agent step; on failure emit agent_error and return None."""
+    try:
+        return await _run_agent(name, agent, query)
+    except Exception as exc:
+        await emit(
+            {"type": "agent_error", "agent": name, "error": f"{type(exc).__name__}: {exc}"[:500]}
+        )
+        return None
+
+
 async def _run_agent(
     name: str,
     agent,
@@ -462,25 +489,38 @@ async def _run_agent(
         }
     )
     started = time.perf_counter()
-    content: str | list[dict] = (
-        [{"type": "text", "text": query}, *attachments] if attachments else query
-    )
-    payload: dict = {"messages": [{"role": "user", "content": content}]}
-    if documents is not None:
-        payload["documents"] = documents
     final = None
-    try:
-        async for mode, chunk in agent.astream(
-            payload,
-            stream_mode=["updates", "values"],
-        ):
-            if mode == "updates":
-                await emit_messages(name, chunk)
-            else:
-                final = chunk
-    except Exception:
-        logger.exception("agent failed name=%s", name)
-        raise
+    for attempt in range(2):
+        text = query
+        if attempt:
+            allowed = ", ".join(AGENT_TOOLS.get(name, [])) or "none"
+            text = (
+                f"{query}\n\nYour previous reply called a tool that does not exist. "
+                f"The only tools you may call are: {allowed}."
+            )
+        content: str | list[dict] = (
+            [{"type": "text", "text": text}, *attachments] if attachments else text
+        )
+        payload: dict = {"messages": [{"role": "user", "content": content}]}
+        if documents is not None:
+            payload["documents"] = documents
+        try:
+            async for mode, chunk in agent.astream(
+                payload,
+                stream_mode=["updates", "values"],
+            ):
+                if mode == "updates":
+                    await emit_messages(name, chunk)
+                else:
+                    final = chunk
+            break
+        except Exception as exc:
+            if attempt == 0 and _is_bad_tool_call(exc):
+                logger.warning("agent called unknown tool name=%s; retrying: %s", name, preview(str(exc), 300))
+                await emit({"type": "agent_retry", "agent": name, "error": preview(str(exc), 300)})
+                continue
+            logger.exception("agent failed name=%s", name)
+            raise
     messages = (final or {}).get("messages") or []
     answer = message_content(messages[-1].content) if messages else ""
     await emit(
@@ -542,8 +582,8 @@ async def run_turn(
             f"Current question:\n{prompt.strip()}",
         ]
     )
-    planner = await _run_agent("planner", planner_agent, planner_input)
-    plan = _plan_from_messages(planner["messages"], prompt)
+    planner = await _try_agent("planner", planner_agent, planner_input)
+    plan = _plan_from_messages(planner["messages"] if planner else [], prompt)
     await emit({"type": "message", "agent": "planner", "content": json.dumps(plan)})
 
     jobs = []
@@ -612,16 +652,25 @@ async def run_turn(
         f"File manifest:\n{json.dumps(manifest)}\n\n"
         f"Specialist reports:\n{json.dumps(reports)}"
     )
-    synthesis = await _run_agent("synthesis", synthesis_agent, synthesis_input)
-    draft = tool_call_args(synthesis["messages"], "draft_answer") or {}
-    draft_text = str(draft.get("answer") or synthesis["answer"])
+    synthesis = await _try_agent("synthesis", synthesis_agent, synthesis_input)
+    if synthesis is None:
+        draft_text = "\n\n".join(f"{name}: {report}" for name, report in reports.items())
+    else:
+        draft = tool_call_args(synthesis["messages"], "draft_answer") or {}
+        draft_text = str(draft.get("answer") or synthesis["answer"])
 
-    verify = await _run_agent(
+    verify = await _try_agent(
         "verify",
         verify_agent,
         f"Draft:\n{draft_text}\n\nSpecialist reports:\n{json.dumps(reports)}",
     )
-    final = tool_call_args(verify["messages"], "finalize_answer") or {}
+    final = (tool_call_args(verify["messages"], "finalize_answer") if verify else None) or {}
+    if not draft_text.strip() and not final.get("answer"):
+        final = {
+            "answer": "I don't know. The agents could not produce an answer for this question.",
+            "unknown": True,
+            "confidence": 0.0,
+        }
     answer = str(final.get("answer") or draft_text)
     unknown = bool(final.get("unknown"))
     cited, confidence = citations.check(
