@@ -237,12 +237,20 @@ async def table_tool(
     try:
         result = table_store.query_select(sql, allowed_tables)
     except Exception as exc:
-        logger.exception("table tool rejected sql=%s", preview(sql, 300))
+        logger.warning("table tool rejected sql=%s error=%s", preview(sql, 300), exc)
         return {
             "type": "text",
-            "text": f"SQL rejected: {exc}\n\n{table_store.describe(allowed_tables)}",
+            "text": f"SQL rejected: {exc}\n\n{table_catalog(state['documents'])}",
         }
-    return {"type": "text", "table": result, "text": result}
+    lowered = sql.lower()
+    sources = [
+        f"[{document.filename}, table {name}]"
+        for document in state["documents"]
+        for name in table_store.tables_for([document.id])
+        if name.lower() in lowered
+    ]
+    text = f"{' '.join(sources)}\n{result}" if sources else result
+    return {"type": "text", "table": result, "text": text}
 
 
 @tool
@@ -313,35 +321,72 @@ async def vision_tool(
     return result
 
 
+_CODE_FULL_LINES = 300
+_CODE_HEADER_LINES = 40
+
+
 @tool
 async def code_tool(
     document_id: str,
     state: Annotated[SubAgentState, InjectedState],
-) -> dict:
-    """Read an uploaded source file. Does not execute code."""
+    question: str = "",
+) -> list:
+    """Read an uploaded source file by document id or filename. Does not execute code.
+    Small files are returned whole; for large files pass `question` to get the relevant parts."""
+    documents = state["documents"]
+    wanted = document_id.strip().lower()
     document = next(
-        (document for document in state["documents"] if document.id == document_id),
-        None,
+        (item for item in documents if wanted in (item.id.lower(), item.filename.lower())),
+        documents[0] if len(documents) == 1 else None,
     )
     if document is None:
-        return {"type": "text", "text": "Code file not found."}
+        known = ", ".join(item.filename for item in documents) or "(none)"
+        return [{"type": "text", "text": f"Code file not found. Available: {known}"}]
     path = Path(document.path)
     if not path.is_file():
-        return {"type": "text", "text": "Source file is missing."}
+        return [{"type": "text", "text": "Source file is missing."}]
     lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
-    window = lines[:120]
-    numbered = "\n".join(f"{index}: {line}" for index, line in enumerate(window, start=1))
-    return {
-        "type": "text",
-        "text": f"[chunk_id=file {document.filename} L1-{len(window)}]\n{numbered}",
-        "filename": document.filename,
-    }
+
+    def numbered(start: int, end: int) -> str:
+        return "\n".join(f"{index}: {lines[index - 1]}" for index in range(start, end + 1))
+
+    if len(lines) <= _CODE_FULL_LINES:
+        return [
+            {
+                "type": "text",
+                "text": f"[{document.filename}, L1-{len(lines)}]\n{numbered(1, len(lines))}",
+                "filename": document.filename,
+            }
+        ]
+    blocks = [
+        {
+            "type": "text",
+            "text": (
+                f"[{document.filename}, L1-{_CODE_HEADER_LINES}] "
+                f"(file has {len(lines)} lines)\n{numbered(1, _CODE_HEADER_LINES)}"
+            ),
+            "filename": document.filename,
+        }
+    ]
+    for hit in search_chunks(question or document.filename, [document.id], {CODE_KIND}, limit=4):
+        blocks.append(
+            {
+                "type": "text",
+                "text": f"[{hit.citation}]\n{hit.data}",
+                "filename": document.filename,
+                "location": hit.location,
+            }
+        )
+    return blocks
 
 
 def table_catalog(documents: list[Document]) -> str:
-    return table_store.describe(
-        table_store.tables_for([document.id for document in documents])
-    )
+    parts = []
+    for document in documents:
+        tables = table_store.tables_for([document.id])
+        if tables:
+            parts.append(f"File {document.filename}:\n{table_store.describe(tables)}")
+    return "\n\n".join(parts) or table_store.describe([])
 
 
 model = get_client(config)

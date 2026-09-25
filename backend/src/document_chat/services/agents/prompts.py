@@ -19,8 +19,10 @@ Do not invent document contents. Say so if the passages do not answer the questi
 
 TABLE_PROMPT = """You are the table/data specialist.
 Answer from spreadsheet tables with one read-only SELECT via table_tool.
-Use only table names listed in the user message.
-Do not invent numbers. Include the table name in your report.
+Use only table names listed in the user message. Double-quote column names with spaces.
+If SQL is rejected, fix it and retry. Prefer letting SQL do the arithmetic (SUM, COUNT, GROUP BY).
+Results start with [filename, table name]; cite that bracket with every number.
+Do not invent numbers.
 """
 
 VISION_PROMPT = """You are the vision/OCR specialist.
@@ -32,8 +34,10 @@ Ground your answer in those blocks. Do not invent pixels you cannot see.
 """
 
 CODE_PROMPT = """You are the code specialist.
-Answer from uploaded source files via code_tool.
-Do not invent source code. Report only what the tool returns.
+Answer from uploaded source files via code_tool. Pass the question so large files
+return the relevant parts. Lines are numbered.
+Cite [filename, Lstart-end] for every claim about the code.
+Do not invent source code and do not claim you ran it. Report only what the tool returns.
 """
 
 SYNTHESIS_PROMPT = """You are the synthesis agent.

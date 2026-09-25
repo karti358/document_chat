@@ -12,8 +12,12 @@ from document_chat.services.parsers.kinds import TEXT_KIND, Chunk
 _MAX_TEXT_ROWS = 200
 
 
+def _clean(frame: pd.DataFrame) -> pd.DataFrame:
+    return frame.dropna(axis=1, how="all").dropna(axis=0, how="all")
+
+
 def parse_csv(path: Path, record: dict) -> List[Chunk]:
-    frame = pd.read_csv(path)
+    frame = _clean(pd.read_csv(path))
     table = table_store.load_frame(record["id"], record["filename"], frame)
     return _sheet_chunks(record, table, "", frame)
 
@@ -22,7 +26,7 @@ def parse_xlsx(path: Path, record: dict) -> List[Chunk]:
     chunks: List[Chunk] = []
     workbook = pd.ExcelFile(path)
     for sheet in workbook.sheet_names:
-        frame = pd.read_excel(workbook, sheet_name=sheet)
+        frame = _clean(pd.read_excel(workbook, sheet_name=sheet))
         table = table_store.load_frame(record["id"], sheet, frame)
         chunks.extend(_sheet_chunks(record, table, sheet, frame))
     return chunks
