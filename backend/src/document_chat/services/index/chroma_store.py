@@ -144,6 +144,7 @@ def _metadata(chunk: Chunk) -> dict:
         "conversation_id": chunk.conversation_id or "",
         "filename": chunk.filename,
         "kind": chunk.kind,
+        "location": chunk.location,
         "ocr_text": (chunk.ocr_text or "")[:800],
         "caption": (chunk.caption or "")[:500],
     }
@@ -161,6 +162,7 @@ def _hits(result: dict) -> list[Chunk]:
             filename=metadatas[index]["filename"],
             kind=metadatas[index]["kind"],
             data=documents[index],
+            location=metadatas[index].get("location") or "",
             ocr_text=metadatas[index].get("ocr_text") or "",
             caption=metadatas[index].get("caption") or "",
         )
@@ -180,6 +182,7 @@ def _image_hits(result: dict) -> list[Chunk]:
             filename=metadatas[index]["filename"],
             kind=metadatas[index]["kind"],
             data=uris[index],
+            location=metadatas[index].get("location") or "",
             ocr_text=metadatas[index].get("ocr_text") or "",
             caption=metadatas[index].get("caption") or "",
         )

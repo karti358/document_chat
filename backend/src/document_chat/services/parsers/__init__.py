@@ -46,13 +46,9 @@ def parse_document(path: Path, record: dict) -> list[Chunk]:
     elif suffix == ".pptx":
         chunks = parse_pptx(path, record)
     elif suffix == ".csv":
-        parse_csv(path, record)
-        logger.info("parse done id=%s file=%s chunks=0 store=duckdb", record.get("id"), record.get("filename"))
-        return []
+        chunks = parse_csv(path, record)
     elif suffix == ".xlsx":
-        parse_xlsx(path, record)
-        logger.info("parse done id=%s file=%s chunks=0 store=duckdb", record.get("id"), record.get("filename"))
-        return []
+        chunks = parse_xlsx(path, record)
     elif suffix in IMAGE_SUFFIXES:
         chunks = parse_image(path, record)
     elif suffix in CODE_SUFFIXES:

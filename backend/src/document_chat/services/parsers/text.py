@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
-
-from document_chat.services.parsers.chunks import split_text
-from document_chat.services.parsers.kinds import TEXT_KIND, Chunk
-import uuid
 from typing import List
+
+from document_chat.services.parsers.chunks import make_chunk, split_text
+from document_chat.services.parsers.kinds import TEXT_KIND, Chunk
 
 _HEADING = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
 
@@ -23,17 +22,10 @@ def parse_text(path: Path, record: dict) -> List[Chunk]:
     sections = _sections(raw) if suffix == ".md" else [("", raw)]
     chunks: List[Chunk] = []
     for heading, body in sections:
+        location = f"section '{heading}'" if heading else ""
         for piece in split_text(body):
-            chunks.append(
-                Chunk(
-                    id=str(uuid.uuid4()),
-                    document_id=record["id"],
-                    conversation_id=record.get("conversation_id"),
-                    filename=record["filename"],
-                    kind=TEXT_KIND,
-                    data=piece,
-                )
-            )
+            data = f"{heading}\n{piece}" if heading else piece
+            chunks.append(make_chunk(record, TEXT_KIND, data, location=location))
     return chunks
 
 

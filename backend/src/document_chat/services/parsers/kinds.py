@@ -44,5 +44,10 @@ class Chunk(BaseModel):
     filename: str
     kind: Literal[TEXT_KIND, CODE_KIND, IMAGE_KIND, TABLE_KIND]
     data: Any
+    location: str = ""
     ocr_text: str = ""
     caption: str = ""
+
+    @property
+    def citation(self) -> str:
+        return f"{self.filename}, {self.location}" if self.location else self.filename

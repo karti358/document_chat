@@ -1,9 +1,23 @@
 from __future__ import annotations
 
 import uuid
-from pathlib import Path
 from typing import Any
+
 from .kinds import Chunk
+
+
+def make_chunk(record: dict, kind: str, data: Any, location: str = "", **extra: Any) -> Chunk:
+    return Chunk(
+        id=str(uuid.uuid4()),
+        document_id=record["id"],
+        conversation_id=record.get("conversation_id") or "",
+        filename=record["filename"],
+        kind=kind,
+        data=data,
+        location=location,
+        **extra,
+    )
+
 
 def split_text(text: str, size: int = 900, overlap: int = 120) -> list[str]:
     cleaned = text.replace("\x00", "").strip()

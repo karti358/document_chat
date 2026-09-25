@@ -197,8 +197,9 @@ async def retrieval_tool(
         result.append(
             {
                 "type": "text",
-                "text": f"[{hit.filename}] {hit.data}",
+                "text": f"[{hit.citation}] {hit.data}",
                 "filename": hit.filename,
+                "location": hit.location,
                 "chunk_id": hit.id,
             }
         )
