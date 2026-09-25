@@ -25,7 +25,7 @@ The brief’s example agent list (Router, Retrieval, Table, Vision, Synthesis, C
 2. **Parsing is a pipeline, not a conversation.** Layout, OCR, and chunking must be deterministic and unit-testable.
 3. **Specialists skip when unused.** Do not stub-call every agent on every turn.
 4. **Typed graph state is the contract.** Agents do not coordinate only through a free-form transcript.
-5. **Core path is fully local.** Optional paid fallbacks stay off by default. (This repo currently lists Groq/OpenAI; those cannot be the default runtime.)
+5. **Open models only; local is one switch away.** Everything except the LLM runs in-process. The default LLM is an open-weight model on Groq's free tier, chosen for demo speed; `PROVIDER=ollama` runs the same pipeline fully offline with no key. Paid providers are optional.
 
 ---
 
@@ -53,14 +53,17 @@ The brief’s example agent list (Router, Retrieval, Table, Vision, Synthesis, C
 
 | Input | Parser | Index artifact |
 | --- | --- | --- |
-| PDF, DOCX, PPTX, MD, TXT | Docling / PyMuPDF / python-docx | Layout-aware text chunks (headers, tables as objects where possible) |
-| CSV, XLSX | pandas | DuckDB views **and** a schema/sample-row text chunk for retrieval |
-| Images / scanned pages | Tesseract (PaddleOCR later if quality is poor) | OCR text + optional caption chunk |
-| Code | language-aware splitter | chunks with `path` + line range |
+| PDF | PyMuPDF (Docling later) | Text chunks with `p. N` |
+| DOCX | python-docx | Paragraphs and tables in document order, grouped by heading (`section '…'`) |
+| PPTX | python-pptx | Text frames, tables, speaker notes per slide (`slide N`) |
+| MD, TXT, HTML | built-in | Markdown split by heading; heading prefixed to each chunk |
+| CSV, XLSX | pandas | DuckDB table per sheet **and** a columns + rows text chunk for retrieval (`sheet '…'`) |
+| Images / scanned pages | Tesseract (PaddleOCR later if quality is poor) | OCR text + caption chunk; OpenCLIP image embedding |
+| Code | 80-line windows, 10-line overlap | Line-numbered chunks (`L start-end`) |
 
-Ingest also writes a **file manifest**: name, type, page/sheet count, parser status, checksum. That manifest is what the Router sees, not raw bytes.
+Every chunk carries a `location` that tools print as `[filename, location]`. That string is the citation unit end to end.
 
-Vision/OCR is **ingest-time**, not a query-time agent. Query latency then stays on text + SQL.
+OCR runs at **ingest time**, so scanned text is searchable by Retrieval with no vision call. A query-time **Vision** agent exists as well, for questions about what an image shows. It gets the image pixels plus the ingest-time OCR text and caption.
 
 ### 3.2 Query (LangGraph)
 
@@ -69,9 +72,10 @@ Vision/OCR is **ingest-time**, not a query-time agent. Query latency then stays 
 | Router / Planner | yes | Classify the turn; emit a structured plan; never answer | JSON schema only |
 | Retrieval | yes | Hybrid search over docs, slides, OCR, code | BM25 + vectors + Reciprocal Rank Fusion |
 | Table / Data | yes | Structured QA on registered sheets | DuckDB SQL |
+| Vision | yes | Read images, scans, charts | Image + OCR attached to input; `vision_tool` (CLIP search) |
 | Code | yes | Explain / compare uploaded source | Code index (no arbitrary execution) |
 | Synthesis | yes | One draft from specialist payloads; no new facts | none |
-| Citation / Verify | yes | Attach sources, drop unsupported claims, refuse | Deterministic claim→span checks, then a cheap critic |
+| Citation / Verify | yes | Drop unsupported claims, set confidence, refuse | LLM critic, then a deterministic citation→tool-result check |
 
 **Code** is a specialist because it has a different citation grain (path + lines) and a different prompt. If time is short, it can start as Retrieval with `kind=code` filters and the same synthesizer — that is a documented scope cut, not a different architecture.
 
@@ -130,18 +134,18 @@ Follow-ups **rewrite against the last plan** before a full re-route.
 
 ---
 
-## 6. Stack (default local path)
+## 6. Stack
 
 | Layer | Choice | Why |
 | --- | --- | --- |
-| Orchestration | LangGraph | Typed state, parallel nodes, skip edges; LangChain is already in the project |
-| LLM | Ollama (Qwen 2.5 7B or Llama 3.1 8B) | No paid keys; small enough for a laptop demo |
-| Embeddings | `nomic-embed-text` via Ollama | Local; adequate for a demo corpus |
-| Vector + keyword | Chroma + BM25 + RRF | One-process demo; Qdrant is the scale-up |
+| Orchestration | LangChain `create_agent` (LangGraph runtime) + `asyncio.gather` fan-out | ReAct loop per agent; parallel specialists; skip unused |
+| LLM | Groq-hosted open-weight model (default) or Ollama (Qwen 2.5 7B / Llama 3.1 8B) | Free tier or fully offline; one `PROVIDER` switch |
+| Embeddings | `all-MiniLM-L6-v2` (ONNX, Chroma default) for text; OpenCLIP ViT-B-32 for images | Local, CPU-only, no extra daemon |
+| Vector + keyword | Chroma + in-memory BM25 + RRF | One-process demo; Qdrant / FTS5 is the scale-up |
 | Tabular QA | DuckDB | See [§7](#7-why-duckdb-not-mongodb-or-sqlite) |
-| App / session store | SQLite (optional, later) | Conversations, ingest jobs, file manifest — OLTP, not analytics |
-| Parse | Docling + pandas + Tesseract | Layout + sheets + OCR |
-| UI | Streamlit | Fastest upload + chat + citation sidebar |
+| App / session store | SQLite (`id` + `json` tables) | Conversations, messages with plans/traces/citations, document records |
+| Parse | PyMuPDF + python-docx/pptx + pandas + Tesseract | Page/slide/section/sheet/line locations; Docling is the upgrade path |
+| UI | Streamlit | Upload + chat + source badges + agent trace |
 
 Rerankers (BGE cross-encoder) and Qdrant are **upgrades** if hybrid search quality is the demo bottleneck — not day-one dependencies.
 
@@ -357,27 +361,26 @@ GraphRAG-style clustering is designed for **corpus-level** summaries on large me
 
 ---
 
-## 12. Pending after the agent shell
+## 12. Current status
 
-The coordinator, subagents, and turn storage are in place. Retrieval, table SQL, and code reading are wired. Compaction is still pending.
+The coordinator, subagents, turn storage, hybrid retrieval, located citations, and the citation check are in place. Compaction, reranking, and entity links are still open.
 
 ### 12.1 File-type tools
 
-| Agent | Tool | Status |
+| Agent | Tool | Behaviour |
 | --- | --- | --- |
-| Retrieval | `search_documents(query)` | Chroma dense search plus BM25 over the same chunks, merged with reciprocal rank fusion. Scoped to this conversation, then to `target_files` when the plan names them. Returns `chunk_id`, filename, page, sheet, and line range. Kinds are `text` and `image` only. |
-| Table | `query_table(sql)` | One read-only `SELECT` or `WITH` against DuckDB tables for those documents. Other statements are rejected. The prompt includes the table catalog. |
-| Code | `read_code(filename, question)` | Code chunks from Chroma, or the first 120 numbered source lines if search misses. Does not execute the file. |
+| Retrieval | `retrieval_tool(query, document_ids?)` | Chroma dense search plus BM25 over the same chunks, merged with reciprocal rank fusion; 6 results. Scoped to the conversation; `document_ids` accepts ids or filenames and falls back to all. Passages start with `[filename, location]`. Kinds `text` and `code`, which includes sheet text chunks and image OCR chunks. |
+| Table | `table_tool(sql)` | One read-only `SELECT`/`WITH` against this conversation's DuckDB tables. DDL/DML, multiple statements, DuckDB file functions and foreign tables are rejected. Results start with `[filename, table …]`. The prompt includes a per-file table catalog. |
+| Vision | `vision_tool(query, document_ids?)` | CLIP search over images; returns caption + OCR text. Pixels are attached to the agent's input message, not the tool result. |
+| Code | `code_tool(document_id, question?)` | Whole file (line-numbered) up to 300 lines; otherwise the first 40 lines plus hybrid-search hits for the question. Accepts an id or filename. Does not execute the file. |
 | Synthesis | `draft_answer` | Recording tool. |
-| Verify | `finalize_answer` | Recording tool. Citation stripping is still not applied to the draft. |
-
-If `parser_status` is not `ready`, the tool result says so.
+| Verify | `finalize_answer` | Recording tool. Then `citations.check` marks each `[file, location]` in the answer as supported only if a tool returned it, capping confidence when citations are unverified or missing. |
 
 ### 12.2 Still open on retrieval
 
 - Cross-encoder reranker
 - 1-hop entity links into the retrieval filter
-- A citation panel in the UI
+- Claim-level entailment (the citation check verifies provenance, not entailment)
 
 ### 12.3 Compaction
 
