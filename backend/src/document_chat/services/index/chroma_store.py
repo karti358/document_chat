@@ -118,6 +118,7 @@ class ChromaStore:
                         query_texts=[prompt],
                         n_results=limit,
                         where=document_filter,
+                        include=["metadatas", "uris"],
                     )
             except Exception:
                 logger.exception("chroma query failed document_ids=%s", document_ids)

@@ -68,6 +68,7 @@ def _conversation_out(record: dict) -> ConversationOut:
                 trace=item.get("trace"),
                 confidence=item.get("confidence"),
                 unknown=item.get("unknown"),
+                citations=item.get("citations") or [],
             )
             for item in record.get("messages") or []
         ],

@@ -13,6 +13,8 @@ class Config(BaseSettings):
     api_key: str = ""
     model: str
     base_url: Optional[str] = None
+    max_retries: int = 6
+    vision_images: bool = True
     data_dir: str = "data"
     sqlite_path: str | None = None
     cors_origins: str = "http://localhost:8501"
@@ -25,19 +27,22 @@ def get_client(config: Config) -> ChatGroq | ChatOpenAI | ChatGoogleGenerativeAI
         return ChatGroq(
             api_key=config.api_key,
             base_url=base_url,
-            model=config.model
+            model=config.model,
+            max_retries=config.max_retries,
         )
     elif config.provider == "openai":
         return ChatOpenAI(
             api_key=config.api_key or "unused",
             base_url=base_url,
-            model=config.model
+            model=config.model,
+            max_retries=config.max_retries,
         )
     elif config.provider == "google":
         return ChatGoogleGenerativeAI(
             api_key=config.api_key,
             base_url=base_url,
-            model=config.model
+            model=config.model,
+            max_retries=config.max_retries,
         )
     elif config.provider == "ollama":
         return ChatOllama(

@@ -24,6 +24,7 @@ class MessageOut(BaseModel):
     trace: dict | None = None
     confidence: float | None = None
     unknown: bool | None = None
+    citations: list[dict] = Field(default_factory=list)
 
 
 class ConversationSummaryOut(BaseModel):

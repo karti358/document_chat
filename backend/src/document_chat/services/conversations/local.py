@@ -170,6 +170,7 @@ class LocalConversationsService:
                 "trace": assistant.get("trace"),
                 "confidence": assistant.get("confidence"),
                 "unknown": assistant.get("unknown"),
+                "citations": assistant.get("citations") or [],
             }
         )
         updates: dict = {

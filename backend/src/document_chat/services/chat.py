@@ -75,6 +75,7 @@ class ChatService:
                         "trace": {"events": list(collected)},
                         "confidence": result.get("confidence"),
                         "unknown": result.get("unknown"),
+                        "citations": result.get("citations"),
                     },
                     orchestrator_state={
                         "documents": [document.model_dump() for document in documents],

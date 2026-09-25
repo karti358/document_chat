@@ -360,6 +360,24 @@ def _render_trace(events: list[dict], plan: dict | None = None) -> None:
                 st.caption(f"{kind}: {json.dumps(event, default=str)[:500]}")
 
 
+def _render_answer_meta(message: dict) -> None:
+    parts = []
+    if message.get("unknown"):
+        parts.append(":orange-badge[I don't know]")
+    confidence = message.get("confidence")
+    if isinstance(confidence, (int, float)):
+        color = "green" if confidence >= 0.7 else "orange" if confidence >= 0.4 else "red"
+        parts.append(f":{color}-badge[confidence {confidence:.0%}]")
+    for item in message.get("citations") or []:
+        text = str(item.get("citation", "")).replace("[", "(").replace("]", ")")
+        if item.get("supported"):
+            parts.append(f":gray-badge[:material/description: {text}]")
+        else:
+            parts.append(f":red-badge[:material/warning: unverified: {text}]")
+    if parts:
+        st.markdown(" ".join(parts))
+
+
 def _render_message_body(message: dict) -> None:
     role = message.get("role") or "assistant"
     css = "msg user" if role == "user" else "msg"
@@ -370,6 +388,7 @@ def _render_message_body(message: dict) -> None:
     )
     st.markdown(message.get("content") or "")
     if role == "assistant":
+        _render_answer_meta(message)
         events = []
         if isinstance(message.get("trace"), dict):
             events = list(message["trace"].get("events") or [])

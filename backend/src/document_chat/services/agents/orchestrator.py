@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from document_chat.config import config, get_client
 from document_chat.logging import get_logger, preview
+from document_chat.services.agents import citations
 from document_chat.services.agents.messages import tool_call_args
 from document_chat.services.agents.prompts import (
     CODE_PROMPT,
@@ -259,66 +260,63 @@ async def vision_tool(
     state: Annotated[SubAgentState, InjectedState],
     document_ids: List[str] | None = None,
 ) -> list:
-    """Search images and return caption, OCR text, and the image itself.
+    """Search images by content; returns caption and OCR text for the best matches.
     Optionally limit to document ids or filenames."""
     ids = [document.id for document in resolve_documents(state["documents"], document_ids)]
     logger.info("vision tool start query=%s document_ids=%s", preview(query, 300), ids)
     hits = chroma_store.query(query, ids, kinds={IMAGE_KIND})
-    sources: list[tuple[str, str, str, str]]
-    if hits:
-        sources = [
-            (str(hit.data), hit.filename, hit.caption or "", hit.ocr_text or "")
-            for hit in hits
-        ]
-    else:
-        image_docs = [
-            document for document in state["documents"] if document.kind == IMAGE_KIND
-        ]
-        if not image_docs:
-            return [{"type": "text", "text": "No images available."}]
-        sources = [
-            (document.path, document.filename, "", "") for document in image_docs
-        ]
+    if not hits:
+        return [{"type": "text", "text": "No images available."}]
+    return [_image_text_block(hit.filename, hit.caption, hit.ocr_text) for hit in hits]
 
-    result: list[dict] = []
-    for path, filename, caption, ocr_text in sources:
-        result.append(
-            {
-                "type": "text",
-                "text": (
-                    f"[{filename}]\n"
-                    f"caption: {caption or '(none)'}\n"
-                    f"ocr_text: {ocr_text or '(empty)'}"
-                ),
-                "filename": filename,
-            }
-        )
-        file_path = Path(path)
-        if not file_path.is_file():
-            result.append(
-                {
-                    "type": "text",
-                    "text": f"Image file missing at path={path}",
-                    "filename": filename,
-                }
-            )
+
+_IMAGE_MIME = {
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+}
+_MAX_ATTACHED_IMAGES = 4
+
+
+def _image_text_block(filename: str, caption: str, ocr_text: str) -> dict:
+    return {
+        "type": "text",
+        "text": (
+            f"[{filename}, image]\n"
+            f"caption: {caption or '(none)'}\n"
+            f"ocr_text: {ocr_text or '(empty)'}"
+        ),
+    }
+
+
+def image_blocks(documents: list[Document]) -> list[dict]:
+    """Text + image_url block pairs for the vision agent's input message.
+
+    Images go in the user message, not in tool results: several providers
+    (Groq among them) only accept string or text content in tool messages.
+    """
+    blocks: list[dict] = []
+    ocr = {
+        chunk.document_id: chunk
+        for chunk in chroma_store.fetch([document.id for document in documents], {TEXT_KIND})
+    }
+    for document in documents[:_MAX_ATTACHED_IMAGES]:
+        path = Path(document.path)
+        mime = _IMAGE_MIME.get(path.suffix.lower())
+        if mime is None or not path.is_file():
             continue
-        mime = {
-            ".png": "image/png",
-            ".jpg": "image/jpeg",
-            ".jpeg": "image/jpeg",
-            ".webp": "image/webp",
-        }.get(file_path.suffix.lower(), "application/octet-stream")
-        encoded = base64.b64encode(file_path.read_bytes()).decode("ascii")
-        result.append(
-            {
-                "type": "image",
-                "image": f"data:{mime};base64,{encoded}",
-                "path": str(file_path),
-                "filename": filename,
-            }
+        chunk = ocr.get(document.id)
+        blocks.append(
+            _image_text_block(
+                document.filename,
+                chunk.caption if chunk else "",
+                chunk.ocr_text if chunk else "",
+            )
         )
-    return result
+        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+        blocks.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}})
+    return blocks
 
 
 _CODE_FULL_LINES = 300
@@ -450,6 +448,7 @@ async def _run_agent(
     agent,
     query: str,
     documents: list[Document] | None = None,
+    attachments: list[dict] | None = None,
 ) -> dict:
     await emit(
         {
@@ -463,7 +462,10 @@ async def _run_agent(
         }
     )
     started = time.perf_counter()
-    payload: dict = {"messages": [{"role": "user", "content": query}]}
+    content: str | list[dict] = (
+        [{"type": "text", "text": query}, *attachments] if attachments else query
+    )
+    payload: dict = {"messages": [{"role": "user", "content": content}]}
     if documents is not None:
         payload["documents"] = documents
     final = None
@@ -546,6 +548,7 @@ async def run_turn(
     await emit({"type": "message", "agent": "planner", "content": json.dumps(plan)})
 
     jobs = []
+    attachments: dict[str, list[dict]] = {}
     query = " | ".join(plan["subqueries"]) if plan["subqueries"] else prompt
     if plan["need_retrieval"]:
         jobs.append(("retrieval", retrieval_agent, query, documents))
@@ -562,6 +565,8 @@ async def run_turn(
         )
     if plan["need_vision"]:
         docs = [document for document in documents if document.kind == IMAGE_KIND]
+        if config.vision_images:
+            attachments["vision"] = image_blocks(resolve_documents(docs, plan["target_files"]))
         jobs.append(("vision", vision_agent, query, docs))
     if plan["need_code"]:
         docs = [document for document in documents if document.kind == CODE_KIND]
@@ -579,12 +584,28 @@ async def run_turn(
         )
 
     reports: dict[str, str] = {}
+    evidence: list[str] = [
+        block["text"] for blocks in attachments.values() for block in blocks if "text" in block
+    ]
     if jobs:
         results = await asyncio.gather(
-            *[_run_agent(name, agent, human, docs) for name, agent, human, docs in jobs]
+            *[
+                _run_agent(name, agent, human, docs, attachments.get(name))
+                for name, agent, human, docs in jobs
+            ],
+            return_exceptions=True,
         )
-        for result in results:
+        for (name, *_), result in zip(jobs, results):
+            if isinstance(result, BaseException):
+                reports[name] = f"{name} specialist failed: {type(result).__name__}: {result}"[:500]
+                await emit({"type": "agent_error", "agent": name, "error": reports[name]})
+                continue
             reports[result["name"]] = result["answer"]
+            evidence.extend(
+                message_content(message.content)
+                for message in result["messages"]
+                if getattr(message, "type", None) == "tool"
+            )
 
     synthesis_input = (
         f"Question:\n{prompt.strip()}\n\n"
@@ -603,11 +624,21 @@ async def run_turn(
     )
     final = tool_call_args(verify["messages"], "finalize_answer") or {}
     answer = str(final.get("answer") or draft_text)
+    unknown = bool(final.get("unknown"))
+    cited, confidence = citations.check(
+        answer,
+        evidence,
+        {document.filename for document in documents},
+        final.get("confidence"),
+        unknown,
+    )
+    await emit({"type": "citations", "agent": "verify", "citations": cited})
     return {
         "content": answer,
         "plan": plan,
-        "confidence": final.get("confidence"),
-        "unknown": bool(final.get("unknown")),
+        "confidence": confidence,
+        "unknown": unknown,
+        "citations": cited,
         "reports": reports,
     }
 
