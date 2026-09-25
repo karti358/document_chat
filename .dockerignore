@@ -1,0 +1,7 @@
+.git
+.vscode
+**/.venv
+**/.env
+**/data
+**/__pycache__
+backend/tests

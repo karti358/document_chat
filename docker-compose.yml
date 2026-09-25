@@ -1,0 +1,29 @@
+x-app: &app
+  build:
+    context: .
+    dockerfile: backend/Dockerfile
+  image: document-chat
+  env_file: backend/.env
+  environment:
+    # Reach Ollama on the host when PROVIDER=ollama (read only by the Ollama client).
+    OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+  volumes:
+    - document_chat_data:/data
+
+services:
+  ui:
+    <<: *app
+    ports:
+      - "8501:8501"
+
+  api:
+    <<: *app
+    command: ["document-chat"]
+    ports:
+      - "8000:8000"
+    profiles: ["api"]
+
+volumes:
+  document_chat_data:
